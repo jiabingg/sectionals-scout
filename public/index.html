@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sectionals Scout</title>
+<meta name="description" content="USTA SoCal opponent scouting reports with ratings from TennisRecord">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23c9d72f'/%3E%3Cpath d='M5 6c6 5 6 15 0 20M27 6c-6 5-6 15 0 20' stroke='%231d5c52' stroke-width='2.5' fill='none'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <span class="ball" aria-hidden="true"></span>
+  <div><h1>Sectionals Scout</h1><div class="sub">USTA SoCal opponent reports · ratings from TennisRecord</div></div>
+  <span class="spacer"></span>
+  <span class="pill" id="liveState" hidden></span>
+  <span class="userbar" id="userbar"><span id="who"></span><button class="btn small ghost" id="adminBtn" type="button" hidden>Team access</button><button class="btn small ghost" id="signOutBtn" type="button">Sign out</button></span>
+</div></header>
+
+<section class="loginview" id="loginView" hidden>
+  <form class="authcard" id="loginForm">
+    <h2>Sign in</h2>
+    <p class="muted">Enter the email your team admin added. We'll send you a one-time sign-in link.</p>
+    <label class="eyebrow" for="loginEmail">Email</label>
+    <input type="email" id="loginEmail" autocomplete="email" required placeholder="you@example.com">
+    <button class="btn primary" id="loginBtn" type="submit">Email me a sign-in link</button>
+    <div id="loginMsg"></div>
+  </form>
+</section>
+
+<div id="app" hidden>
+<section class="controls" id="controls" hidden><div class="wrap">
+  <form id="searchForm" style="display:contents">
+    <div class="field"><label class="eyebrow" for="yearSel">Season</label>
+      <select id="yearSel"></select></div>
+    <div class="field"><label class="eyebrow" for="leagueSel">League</label>
+      <select id="leagueSel">
+        <option value="">All leagues</option><option>Adult 18+</option><option>Adult 40+</option><option>Adult 55+</option><option>Adult 65+</option>
+        <option>Mixed 18+</option><option>Mixed 40+</option><option>Tri-Level 18+</option><option>Tri-Level 40+</option><option>Combo</option><option>Flex Format</option>
+      </select></div>
+    <div class="field grow"><label class="eyebrow" for="teamInput">Team name (or part of it)</label>
+      <input type="text" id="teamInput" placeholder="e.g. Irvine, LBTC, PVTC/Smith" autocomplete="off"></div>
+    <label class="check" for="deepChk"><input type="checkbox" id="deepChk" checked> Player deep scan</label>
+    <button class="btn primary" id="searchBtn" type="submit">Find team</button>
+  </form>
+  <div style="flex-basis:100%;min-width:0">
+    <div class="results" id="results"></div>
+    <div class="status" id="status" hidden><div class="num" id="statusText"></div><div class="bar"><i id="statusBar"></i></div></div>
+  </div>
+</div></section>
+<div class="wrap"><div id="msg"></div></div>
+
+<main class="wrap main">
+  <aside class="board" aria-label="Scouted teams">
+    <h2>Scouted teams</h2>
+    <div class="field"><label class="eyebrow" for="mySel">My team</label><select id="mySel"></select></div>
+    <div id="boardList" class="board"></div>
+  </aside>
+  <section class="report" id="report"></section>
+</main>
+<footer class="wrap foot">Ratings are TennisRecord's estimates. Not affiliated with the USTA or TennisRecord.com.</footer>
+</div>
+
+<dialog id="accessDlg" class="dlg" aria-labelledby="accessTitle">
+  <div class="dlghead"><h2 id="accessTitle">Team access</h2><button class="btn small" id="accessClose" type="button">Close</button></div>
+  <div id="accessBody" class="dlgbody"></div>
+</dialog>
+
+<div class="tip" id="tip" hidden></div>
+<script src="/core.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
