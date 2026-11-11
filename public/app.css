@@ -152,27 +152,15 @@ textarea{width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;
 
 /* ---------- website additions ---------- */
 body{margin:0}
-.userbar{display:flex;gap:8px;align-items:center;font-size:13px;flex-wrap:wrap;min-width:0}
-.userbar #who{opacity:.85;overflow-wrap:anywhere}
-body:not(.signed-in) .userbar,body:not(.signed-in) #liveState{display:none}
 .btn.ghost{background:transparent;border-color:rgba(255,255,255,.35);color:var(--court-ink)}
 .btn.ghost:hover{border-color:var(--court-ink)}
-#liveState:not(:empty){display:inline-flex}
+#liveState:empty{display:none}
 #msg:empty{display:none}
 #msg{padding-top:2px}
-.loginview{display:flex;justify-content:center;padding:48px 16px}
-.authpage{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--bg)}
-.authcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:24px;max-width:420px;width:100%;display:flex;flex-direction:column;gap:10px}
-.authcard h1,.authcard h2{font-size:28px}
-.authcard p{margin:0}
-.authcard input[type=email]{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 10px;font:inherit;color:inherit}
-.authcard .btn{align-self:flex-start}
-.authpage .ball{width:28px;height:28px;border-radius:50%;background:var(--accent);display:block}
 .dlg{border:1px solid var(--line);border-radius:var(--r);padding:0;width:min(720px,calc(100vw - 32px));background:var(--surface);color:var(--ink)}
 .dlg::backdrop{background:rgba(10,20,25,.45)}
 .dlghead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
 .dlghead h2{font-size:24px}
 .dlgbody{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
-.adduser{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.adduser input[type=email]{flex:1 1 220px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;font:inherit;color:inherit;min-width:0}
+.pwbox{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;font:inherit;color:inherit;min-width:0}
 .foot{color:var(--ink3);font-size:12px;padding-bottom:28px}

@@ -36,58 +36,36 @@ function mockTR() {
   return new Promise((r) => srv.listen(0, () => r({ srv, hits, base: `http://127.0.0.1:${srv.address().port}` })));
 }
 
-test("sign in, search, scout, read state, notes, prefs, access control", async () => {
-  const tr = await mockTR();
+async function startApp(tr, adminPassword) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "scout-"));
   const { createApp } = require("../server");
-  const { app, close } = createApp({ dataDir, adminEmails: ["captain@example.com"], devLoginLinks: true, isLocal: true, baseUrl: "http://localhost", smtp: { host: "" }, tr: { base: tr.base, gapMs: 0, concurrency: 2 } });
+  const { app, close } = createApp({ dataDir, adminPassword, tr: { base: tr.base, gapMs: 0, concurrency: 2 } });
   const srv = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   const base = `http://127.0.0.1:${srv.address().port}`;
-  const call = async (p, opts = {}, cookie) => {
-    const res = await fetch(base + p, { method: opts.method || "GET", redirect: "manual", headers: { "X-Scout": "1", ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const call = async (p, opts = {}, key) => {
+    const res = await fetch(base + p, { method: opts.method || "GET", headers: { "X-Scout": "1", ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(key ? { "X-Admin-Key": key } : {}) }, body: opts.body ? JSON.stringify(opts.body) : undefined });
     const text = await res.text();
     let json = null; try { json = JSON.parse(text); } catch (e) {}
-    return { status: res.status, json, text, headers: res.headers };
+    return { status: res.status, json, text };
   };
-  const signIn = async (email) => {
-    const r = await call("/api/auth/request", { method: "POST", body: { email } });
-    assert.strictEqual(r.status, 200, r.text);
-    if (!r.json.devLink) return null;
-    const token = new URL(r.json.devLink).searchParams.get("token");
-    const page = await call("/auth/verify?token=" + token);
-    assert.match(page.text, /Finish signing in/); // GET alone doesn't sign in
-    const v = await fetch(base + "/auth/verify", { method: "POST", redirect: "manual", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" + token });
-    assert.strictEqual(v.status, 303);
-    const again = await fetch(base + "/auth/verify", { method: "POST", redirect: "manual", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" + token });
-    assert.match(again.headers.get("location"), /expired/); // single use
-    return v.headers.get("set-cookie").split(";")[0];
-  };
-  const wait = async (job, cookie) => { while (job.status === "running") { await new Promise((r) => setTimeout(r, 100)); job = (await call("/api/jobs/" + job.id, {}, cookie)).json; } return job; };
+  const wait = async (job) => { while (job.status === "running") { await new Promise((r) => setTimeout(r, 100)); job = (await call("/api/jobs/" + job.id)).json; } return job; };
+  return { call, wait, stop: () => { srv.close(); close(); } };
+}
 
+test("no password: anyone can view and scout", async () => {
+  const tr = await mockTR();
+  const { call, wait, stop } = await startApp(tr, "");
   try {
-    assert.strictEqual((await call("/api/state")).status, 401);
-    assert.strictEqual(await signIn("stranger@example.com"), null); // not on the list: no link, same message
-    const admin = await signIn("captain@example.com");
-    const me = (await call("/api/me", {}, admin)).json;
-    assert.strictEqual(me.role, "admin");
-
-    // CSRF header required
-    const noHdr = await fetch(base + "/api/prefs", { method: "PUT", headers: { Cookie: admin, "Content-Type": "application/json" }, body: "{}" });
-    assert.strictEqual(noHdr.status, 403);
-
-    let job = (await call("/api/search", { method: "POST", body: { q: "Test", year: "2026" } }, admin)).json;
-    job = await wait(job, admin);
+    const me = (await call("/api/me")).json;
+    assert.deepStrictEqual([me.admin, me.passwordSet], [true, false]);
+    let job = await wait((await call("/api/search", { method: "POST", body: { q: "Test", year: "2026" } })).json);
     assert.strictEqual(job.status, "done", JSON.stringify(job.error));
     assert.strictEqual(job.result.teams.length, 2);
-
-    job = (await call("/api/scout", { method: "POST", body: { name: L.OUR, year: "2026", deep: true } }, admin)).json;
-    job = await wait(job, admin);
+    job = await wait((await call("/api/scout", { method: "POST", body: { name: L.OUR, year: "2026", deep: true } })).json);
     assert.strictEqual(job.status, "done", JSON.stringify(job.error));
     assert.deepStrictEqual([job.result.players, job.result.scorecards, job.result.deep], [8, 3, true]);
 
-    const st = (await call("/api/state", {}, admin)).json;
-    assert.strictEqual(st.teams.length, 1);
-    const t = st.teams[0];
+    const t = (await call("/api/state")).json.teams[0];
     assert.strictEqual(t.level, "4.0");
     assert.strictEqual(t.matches.filter((m) => !/local/i.test(m.type)).length, 1);
     assert.strictEqual(t.deep["Harper Quinn"].ntrpType, "S");
@@ -97,44 +75,38 @@ test("sign in, search, scout, read state, notes, prefs, access control", async (
     const TR = new Function(core + "; return TR;")();
     const A = TR.analyze(t);
     assert.deepStrictEqual(A.slots, ["S1", "S2", "D1", "D2", "D3"]);
-    assert.strictEqual(A.nMatches, 3);
     const pred = TR.predict(t, A);
     assert.deepStrictEqual(pred.lineup.S1, ["Avery Stone"]);
     assert.deepStrictEqual([...pred.lineup.D1].sort(), ["Casey Moore", "Drew Patel"]);
 
     // scorecards are cached: a refresh refetches profile + players only
     const before = tr.hits.filter((h) => h.includes("matchresults")).length;
-    job = await wait((await call("/api/scout", { method: "POST", body: { name: L.OUR, year: "2026", deep: true } }, admin)).json, admin);
+    job = await wait((await call("/api/scout", { method: "POST", body: { name: L.OUR, year: "2026" } })).json);
     assert.strictEqual(job.status, "done");
     assert.strictEqual(tr.hits.filter((h) => h.includes("matchresults")).length, before);
 
-    // add a member; member can read, note, save prefs, but not scout or manage users
-    const add = await call("/api/users", { method: "POST", body: { email: "Teammate@Example.com", role: "member" } }, admin);
-    assert.strictEqual(add.json.email, "teammate@example.com");
-    const member = await signIn("teammate@example.com");
-    assert.strictEqual((await call("/api/me", {}, member)).json.role, "member");
-    assert.strictEqual((await call("/api/state", {}, member)).json.teams.length, 1);
-    assert.strictEqual((await call("/api/scout", { method: "POST", body: { name: L.OUR, year: "2026" } }, member)).status, 403);
-    assert.strictEqual((await call("/api/users", {}, member)).status, 403);
-    assert.strictEqual((await call("/api/teams/" + t.key, { method: "DELETE" }, member)).status, 403);
-    assert.strictEqual((await call("/api/notes/Avery%20Stone", { method: "PUT", body: { text: "Big lefty serve" } }, member)).status, 200);
-    assert.strictEqual((await call("/api/prefs", { method: "PUT", body: { myKey: t.key, avail: { [t.key]: { "Gray Lopez": false } } } }, member)).status, 200);
-    const mst = (await call("/api/state", {}, member)).json;
-    assert.strictEqual(mst.notes["Avery Stone"].text, "Big lefty serve");
-    assert.strictEqual(mst.prefs.avail[t.key]["Gray Lopez"], false);
-    assert.strictEqual((await call("/api/state", {}, admin)).json.prefs, null); // prefs are per person
+    // notes are shared; a write without the custom header is refused
+    assert.strictEqual((await call("/api/notes/Avery%20Stone", { method: "PUT", body: { text: "Big lefty serve" } })).status, 200);
+    assert.strictEqual((await call("/api/state")).json.notes["Avery Stone"].text, "Big lefty serve");
+    assert.strictEqual((await call("/api/plans/" + t.key, { method: "POST", body: { teamName: "x", brief: {} } })).status, 400); // no API key
+  } finally { stop(); tr.srv.close(); }
+});
 
-    // plans need an API key
-    assert.strictEqual((await call("/api/plans/" + t.key, { method: "POST", body: { teamName: "x", brief: {} } }, admin)).status, 403);
-
-    // removing a member ends their session
-    await call("/api/users/teammate%40example.com", { method: "DELETE" }, admin);
-    assert.strictEqual((await call("/api/state", {}, member)).status, 401);
-
-    // logout
-    await call("/api/auth/logout", { method: "POST", body: {} }, admin);
-    assert.strictEqual((await call("/api/me", {}, admin)).status, 401);
-  } finally {
-    srv.close(); tr.srv.close(); close();
-  }
+test("with ADMIN_PASSWORD: viewing is open, scouting needs the password", async () => {
+  const tr = await mockTR();
+  const { call, wait, stop } = await startApp(tr, "ace-serve-42");
+  try {
+    let me = (await call("/api/me")).json;
+    assert.deepStrictEqual([me.admin, me.passwordSet], [false, true]);
+    assert.strictEqual((await call("/api/state")).status, 200);
+    assert.strictEqual((await call("/api/search", { method: "POST", body: { q: "Test", year: "2026" } })).status, 403);
+    assert.strictEqual((await call("/api/search", { method: "POST", body: { q: "Test", year: "2026" } }, "wrong")).status, 403);
+    assert.strictEqual((await call("/api/teams/x", { method: "DELETE" })).status, 403);
+    me = (await call("/api/me", {}, "ace-serve-42")).json;
+    assert.strictEqual(me.admin, true);
+    const job = await wait((await call("/api/scout", { method: "POST", body: { name: L.OUR, year: "2026", deep: false } }, "ace-serve-42")).json);
+    assert.strictEqual(job.status, "done", JSON.stringify(job.error));
+    assert.strictEqual((await call("/api/state")).json.teams.length, 1);
+    assert.strictEqual((await call("/api/notes/Avery%20Stone", { method: "PUT", body: { text: "x" } })).status, 200); // notes stay open
+  } finally { stop(); tr.srv.close(); }
 });

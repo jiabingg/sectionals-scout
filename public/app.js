@@ -9,20 +9,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const S = { teams: {}, cfg: { myKey: null, oppKey: null, avail: {} }, notes: {}, plans: {}, tab: "overview", scen: "pred", custom: null, mine: null, example: false, busy: false };
 let ME = null, currentJob = null, lastHits = null;
-const isAdmin = () => !!ME && ME.role === "admin";
+const isAdmin = () => !!ME && ME.admin;
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} },
+};
+
 
 // ---------- API ----------
 async function api(path, opts) {
   opts = opts || {};
+  const key = store.get("ss_admin");
   const res = await fetch(path, {
     method: opts.method || "GET",
-    headers: Object.assign({ "X-Scout": "1" }, opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+    headers: Object.assign({ "X-Scout": "1" }, key ? { "X-Admin-Key": key } : {}, opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    credentials: "same-origin",
   });
   let data = {};
   try { data = await res.json(); } catch (e) {}
-  if (!res.ok) throw Object.assign(new Error(data.error || "Request failed (" + res.status + ")"), { status: res.status, data });
+  if (!res.ok) {
+    if (data.code === "admin" && ME && ME.admin) { store.set("ss_admin", null); ME.admin = false; applyRole(); }
+    throw Object.assign(new Error(data.error || "Request failed (" + res.status + ")"), { status: res.status, data });
+  }
   return data;
 }
 
@@ -47,18 +55,22 @@ async function runJob(path, body) {
   sel.innerHTML = [y + 1, y, y - 1, y - 2, y - 3].map((v) => `<option ${v === y ? "selected" : ""}>${v}</option>`).join("");
 })();
 async function boot() {
-  try { ME = await api("/api/me"); }
-  catch (e) { if (e.status === 401) return showLogin(); return fatal(e); }
-  document.body.classList.add("signed-in");
-  $("#app").hidden = false;
-  $("#loginView").hidden = true;
-  $("#who").textContent = ME.email;
-  $("#liveState").hidden = false;
-  $("#adminBtn").hidden = !isAdmin();
-  $("#controls").hidden = !isAdmin();
-  setLive(isAdmin() ? "Admin · scouting on" : "Team view", isAdmin() ? "You can search TennisRecord and scout teams." : "The team admin scouts teams; you can read reports, add notes and plan line-ups.");
+  try { ME = await api("/api/me"); } catch (e) { return fatal(e); }
+  applyRole();
   render();
   await loadState();
+}
+
+// Shows or hides the scouting controls for this viewer.
+function applyRole() {
+  const admin = isAdmin();
+  $("#controls").hidden = !admin;
+  const b = $("#adminBtn");
+  b.hidden = !ME.passwordSet;
+  b.textContent = admin ? "Lock" : "Admin";
+  b.title = admin ? "Forget the admin password on this device" : "Enter the admin password to scout teams";
+  setLive(admin ? "Scouting on" : "View only", admin ? "You can search TennisRecord and scout teams." : "Reports are read-only. Player notes and line-up planning still work.");
+  if (S.tab) render();
 }
 
 async function loadState() {
@@ -70,47 +82,43 @@ async function loadState() {
   S.plans = st.plans || {};
   if (Object.keys(teams).length) {
     S.example = false; S.teams = teams;
-    S.cfg = Object.assign({ myKey: null, oppKey: null, avail: {} }, st.prefs || {});
+    let saved = {};
+    try { saved = JSON.parse(store.get("ss_cfg") || "{}") || {}; } catch (e) {}
+    S.cfg = Object.assign({ myKey: null, oppKey: null, avail: {} }, saved);
     if (S.cfg.myKey && !teams[S.cfg.myKey]) S.cfg.myKey = null;
     if (S.cfg.oppKey && !teams[S.cfg.oppKey]) S.cfg.oppKey = null;
   } else { S.teams = {}; loadExample(); }
   render();
 }
 
-function fatal(e) { document.body.innerHTML = `<div class="authpage"><div class="authcard"><h1>Sectionals Scout</h1><p>${esc(e.message || "Couldn't reach the server.")}</p><a class="btn primary" href="/">Try again</a></div></div>`; }
+function fatal(e) { $("#report").innerHTML = `<div class="notice err">${esc(e.message || "Couldn't reach the server.")} <a href="/">Try again</a></div>`; }
 
-// ---------- sign in ----------
-function showLogin() {
-  $("#app").hidden = true;
-  $("#loginView").hidden = false;
-  const p = new URLSearchParams(location.search);
-  if (p.get("signin") === "expired") $("#loginMsg").innerHTML = `<div class="notice err">That sign-in link expired or was already used. Ask for a new one.</div>`;
-  $("#loginForm").onsubmit = async (ev) => {
+// ---------- admin password ----------
+function openAdmin() {
+  if (isAdmin()) { store.set("ss_admin", null); ME.admin = false; applyRole(); showMsg("Locked. This device no longer has the admin password."); return; }
+  const dlg = $("#adminDlg");
+  $("#adminPw").value = ""; $("#adminErr").textContent = "";
+  dlg.showModal();
+  $("#adminForm").onsubmit = async (ev) => {
     ev.preventDefault();
-    const email = $("#loginEmail").value.trim();
-    if (!email) return;
-    const btn = $("#loginBtn"); btn.disabled = true;
-    try {
-      const r = await api("/api/auth/request", { method: "POST", body: { email } });
-      $("#loginMsg").innerHTML = `<div class="notice ok">${esc(r.message)}</div>` + (r.devLink ? `<div class="notice" style="margin-top:8px">Local test mode (email isn't set up): <a href="${esc(r.devLink)}">open your sign-in link</a>.</div>` : "");
-    } catch (e) { $("#loginMsg").innerHTML = `<div class="notice err">${esc(e.message)}</div>`; }
-    finally { btn.disabled = false; }
+    store.set("ss_admin", $("#adminPw").value);
+    try { ME = await api("/api/me"); } catch (e) {}
+    if (ME && ME.admin) { dlg.close(); applyRole(); showMsg("Scouting unlocked on this device.", "ok"); return; }
+    store.set("ss_admin", null);
+    $("#adminErr").textContent = "That password didn't work.";
   };
 }
-async function signOut() { try { await api("/api/auth/logout", { method: "POST", body: {} }); } catch (e) {} location.href = "/"; }
 
 function setLive(t, title) { const el = $("#liveState"); el.textContent = t; el.title = title || ""; }
 async function saveCfg(patch) {
   Object.assign(S.cfg, patch);
-  if (!S.example) { try { await api("/api/prefs", { method: "PUT", body: { myKey: S.cfg.myKey, oppKey: S.cfg.oppKey, avail: S.cfg.avail || {} } }); } catch (e) {} }
+  if (!S.example) store.set("ss_cfg", JSON.stringify({ myKey: S.cfg.myKey, oppKey: S.cfg.oppKey, avail: S.cfg.avail || {} }));
   render();
 }
 
 function explain(e) {
   const c = e && e.code;
   if (c === "user_cancel") return "Stopped. Anything already saved is still on the board.";
-  if (e && e.status === 401) return "Your sign-in expired. Reload the page and sign in again.";
-  if (e && e.status === 403) return esc(e.message);
   return esc((e && e.message) || "Something interrupted the lookup. Try again in a moment.");
 }
 function showMsg(html, kind) { $("#msg").innerHTML = html ? `<div class="notice ${kind || ""}" style="margin-top:10px">${html}</div>` : ""; }
@@ -169,39 +177,6 @@ async function scout(hit, year, opts) {
   render();
 }
 
-// ---------- team access (admin) ----------
-async function openAccess() {
-  const dlg = $("#accessDlg");
-  const draw = (users, mail, note) => {
-    $("#accessBody").innerHTML = `
-      <p class="muted" style="margin:0">People on this list can sign in with their email. Members read reports, add player notes and plan their own line-ups; admins can also scout teams and manage this list.</p>
-      <form id="addUser" class="adduser">
-        <input type="email" id="newEmail" placeholder="teammate@example.com" required autocomplete="off" aria-label="Email to add">
-        <select id="newRole" aria-label="Role"><option value="member">Member</option><option value="admin">Admin</option></select>
-        <label class="check" style="padding:0"><input type="checkbox" id="newNotify" ${mail ? "checked" : "disabled"}> Email them</label>
-        <button class="btn primary" type="submit">Add</button>
-      </form>
-      ${mail ? "" : `<p class="muted" style="margin:0;font-size:12.5px">Email isn't set up on the server, so invites and sign-in links can't be sent yet (see README → Email).</p>`}
-      ${note ? `<div class="notice ${note.kind}">${esc(note.text)}</div>` : ""}
-      <div class="tbl-wrap"><table class="t"><tr><th>Email</th><th>Role</th><th>Last sign-in</th><th></th></tr>
-      ${users.map((u) => `<tr><td>${esc(u.email)}</td><td>${u.role === "admin" ? '<span class="tag mine">Admin</span>' : "Member"}</td><td>${u.last_login ? new Date(u.last_login).toLocaleDateString() : '<span class="muted">never</span>'}</td><td>${u.fromEnv || u.email === ME.email ? "" : `<button class="btn small" data-rm="${esc(u.email)}">Remove</button>`}</td></tr>`).join("")}</table></div>`;
-    $("#addUser").onsubmit = async (ev) => {
-      ev.preventDefault();
-      try {
-        const r = await api("/api/users", { method: "POST", body: { email: $("#newEmail").value, role: $("#newRole").value, notify: $("#newNotify").checked } });
-        draw(r.users, mail, { kind: "ok", text: `Added ${r.email}.${r.emailed ? " Invite sent." : ""}` });
-      } catch (e) { draw(users, mail, { kind: "err", text: e.message }); }
-    };
-    $("#accessBody").querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
-      if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Click again to remove"; return; }
-      try { const r = await api("/api/users/" + encodeURIComponent(b.dataset.rm), { method: "DELETE" }); draw(r.users, mail, { kind: "ok", text: `Removed ${b.dataset.rm}.` }); }
-      catch (e) { draw(users, mail, { kind: "err", text: e.message }); }
-    }));
-  };
-  $("#accessBody").innerHTML = `<p class="muted">Loading…</p>`;
-  dlg.showModal();
-  try { const r = await api("/api/users"); draw(r.users, r.mail); } catch (e) { $("#accessBody").innerHTML = `<div class="notice err">${esc(e.message)}</div>`; }
-}
 
 // ---------- example data (fictional) ----------
 function loadExample() {
@@ -539,10 +514,10 @@ function renderPlan(P, t, A) {
   const saved = S.plans[t.key];
   const my = S.teams[S.cfg.myKey];
   const can = ME && ME.features && ME.features.plans && !S.example && !t.example;
-  const why = !(ME && ME.features && ME.features.plans) ? (isAdmin() ? "Writing plans needs an Anthropic API key on the server (see README → Game plans)." : "Your team admin writes game plans.") : (S.example || t.example) ? "Plans are written for real scouted teams." : "";
+  const why = !(ME && ME.features && ME.features.plans) ? (isAdmin() ? "Writing plans needs an Anthropic API key on the server (see README → Game plans)." : "Plans are written by whoever has the admin password.") : (S.example || t.example) ? "Plans are written for real scouted teams." : "";
   P.innerHTML = `<div class="sec"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between"><h3>Game plan</h3>
     ${can ? `<button class="btn primary" id="genBtn">${saved ? "Rewrite game plan" : "Write game plan with Claude"}</button>` : ""}</div>
-    <p class="muted" style="margin:0;max-width:80ch">Claude reads this scouting data${my && my.key !== t.key ? ", your roster, your availability and the line-up on the Matchup tab" : ""}, plus the team's player notes, and writes a captain's plan. Everyone on the team sees the saved plan. ${esc(why)}</p>
+    <p class="muted" style="margin:0;max-width:80ch">Claude reads this scouting data${my && my.key !== t.key ? ", your roster, your availability and the line-up on the Matchup tab" : ""}, plus the team's player notes, and writes a captain's plan. Everyone with the link sees the saved plan. ${esc(why)}</p>
     <div id="planOut">${saved ? `<div class="plan">${md(saved.text)}</div><p class="muted" style="font-size:12px">Written ${new Date(saved.at).toLocaleString()}${saved.myName ? " for " + esc(saved.myName) : ""}${saved.by ? " by " + esc(saved.by) : ""}.</p>` : ""}</div></div>`;
   const gb = $("#genBtn");
   if (gb) gb.onclick = async () => {
@@ -558,7 +533,6 @@ function renderPlan(P, t, A) {
   };
 }
 
-$("#signOutBtn").onclick = signOut;
-$("#adminBtn").onclick = openAccess;
-$("#accessClose").onclick = () => $("#accessDlg").close();
+$("#adminBtn").onclick = openAdmin;
+$("#adminCancel").onclick = () => $("#adminDlg").close();
 boot();
